@@ -1,0 +1,503 @@
+// POE2 交易市场助手后台脚本
+chrome.runtime.onInstalled.addListener(() => {
+    console.log('POE2 交易市场助手已安装');
+});
+
+// 处理插件图标点击
+chrome.action.onClicked.addListener((tab) => {
+    // 如果当前页面是交易页面，发送消息给content script来切换面板
+    if (tab.url && (tab.url.includes('/trade') || tab.url.includes('/trade2'))) {
+        chrome.tabs.sendMessage(tab.id, {
+            type: 'TOGGLE_HISTORY_PANEL'
+        }).catch(error => {
+            console.log('发送消息失败:', error);
+        });
+    } else {
+        // 如果不是交易页面，打开交易页面
+        const tradeUrl = tab.url && tab.url.includes('poe.game.qq.com')
+            ? 'https://poe.game.qq.com/trade2'
+            : 'https://www.pathofexile.com/trade';
+        chrome.tabs.create({ url: tradeUrl });
+    }
+});
+
+// 监听来自content script的消息
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    console.log('🔧 Background收到消息:', request.type);
+
+    if (request.type === 'SAVE_SEARCH_RECORD') {
+        console.log('💾 开始保存搜索记录:', request.data);
+        saveSearchRecord(request.data).then(() => {
+            console.log('✅ 搜索记录保存成功');
+            sendResponse({ success: true });
+        }).catch(error => {
+            console.error('❌ 搜索记录保存失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
+        return true; // 保持消息通道开放
+    } else if (request.type === 'GET_SEARCH_HISTORY') {
+        console.log('📚 获取搜索历史');
+        getSearchHistory().then(history => {
+            console.log('✅ 获取到历史记录:', history.length, '条');
+            sendResponse({ success: true, data: history });
+        }).catch(error => {
+            console.error('❌ 获取历史记录失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
+        return true; // 保持消息通道开放
+    } else if (request.type === 'DELETE_SEARCH_RECORD') {
+        deleteSearchRecord(request.id).then(() => {
+            sendResponse({ success: true });
+        }).catch(error => {
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    } else if (request.type === 'CLEAR_SEARCH_HISTORY') {
+        clearSearchHistory().then(() => {
+            sendResponse({ success: true });
+        }).catch(error => {
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    } else if (request.type === 'SAVE_FAVORITE') {
+        console.log('💾 开始保存收藏:', request.data);
+        saveFavorite(request.data).then(() => {
+            console.log('✅ 收藏保存成功');
+            sendResponse({ success: true });
+        }).catch(error => {
+            console.error('❌ 收藏保存失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    } else if (request.type === 'GET_FAVORITES') {
+        console.log('📚 获取收藏列表');
+        getFavorites().then(favorites => {
+            console.log('✅ 获取到收藏:', favorites.length, '条');
+            sendResponse({ success: true, favorites: favorites });
+        }).catch(error => {
+            console.error('❌ 获取收藏失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    } else if (request.type === 'DELETE_FAVORITE') {
+        deleteFavorite(request.id).then(() => {
+            sendResponse({ success: true });
+        }).catch(error => {
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    } else if (request.type === 'CLEAR_FAVORITES') {
+        clearFavorites().then(() => {
+            sendResponse({ success: true });
+        }).catch(error => {
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    } else if (request.type === 'MOVE_TO_FOLDER') {
+        console.log('📁 移动收藏到文件夹:', request.favoriteId, '->', request.folderId);
+        moveToFolder(request.favoriteId, request.folderId).then(() => {
+            console.log('✅ 收藏移动成功');
+            sendResponse({ success: true });
+        }).catch(error => {
+            console.error('❌ 移动收藏失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    } else if (request.type === 'DELETE_FOLDER') {
+        console.log('🗑️ 删除文件夹:', request.id);
+        deleteFolderItem(request.id).then(() => {
+            console.log('✅ 文件夹删除成功');
+            sendResponse({ success: true });
+        }).catch(error => {
+            console.error('❌ 删除文件夹失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    } else if (request.type === 'ADD_TO_FOLDER') {
+        console.log('⭐ 添加收藏到文件夹:', request.favorite.name, '->', request.folderId);
+        addToFolder(request.favorite, request.folderId).then(() => {
+            console.log('✅ 收藏添加到文件夹成功');
+            sendResponse({ success: true });
+        }).catch(error => {
+            console.error('❌ 添加收藏到文件夹失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    } else if (request.type === 'RENAME_FOLDER') {
+        console.log('✏️ 重命名文件夹:', request.id, '->', request.newName);
+        renameFolderItem(request.id, request.newName).then(() => {
+            console.log('✅ 文件夹重命名成功');
+            sendResponse({ success: true });
+        }).catch(error => {
+            console.error('❌ 重命名文件夹失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    } else if (request.type === 'MOVE_TO_ROOT') {
+        console.log('📤 移动收藏到根目录:', request.favoriteId);
+        moveToRoot(request.favoriteId).then(() => {
+            console.log('✅ 收藏移动到根目录成功');
+            sendResponse({ success: true });
+        }).catch(error => {
+            console.error('❌ 移动收藏到根目录失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    }
+});
+
+// 保存搜索记录
+async function saveSearchRecord(record) {
+    try {
+        // 获取现有的搜索历史
+        const result = await chrome.storage.local.get({ searchHistory: [] });
+        let searchHistory = result.searchHistory;
+
+        // 按ID去重：如果存在相同ID的记录，删除旧的
+        const existingIndex = searchHistory.findIndex(existing => existing.id === record.id);
+        if (existingIndex !== -1) {
+            console.log('发现相同ID的记录，删除旧记录:', searchHistory[existingIndex]);
+            searchHistory.splice(existingIndex, 1);
+        }
+
+        // 添加新记录到数组开头
+        searchHistory.unshift(record);
+
+        // 限制历史记录数量（最多保存100条）
+        if (searchHistory.length > 100) {
+            searchHistory = searchHistory.slice(0, 100);
+        }
+
+        // 保存到存储
+        await chrome.storage.local.set({ searchHistory });
+        console.log('搜索记录已保存:', record);
+    } catch (error) {
+        console.error('保存搜索记录失败:', error);
+    }
+}
+
+// 获取搜索历史
+async function getSearchHistory() {
+    try {
+        const result = await chrome.storage.local.get({ searchHistory: [] });
+        return result.searchHistory;
+    } catch (error) {
+        console.error('获取搜索历史失败:', error);
+        return [];
+    }
+}
+
+// 删除搜索记录
+async function deleteSearchRecord(recordId) {
+    try {
+        const result = await chrome.storage.local.get({ searchHistory: [] });
+        const searchHistory = result.searchHistory.filter(record => record.id !== recordId);
+        await chrome.storage.local.set({ searchHistory });
+        console.log('搜索记录已删除:', recordId);
+    } catch (error) {
+        console.error('删除搜索记录失败:', error);
+    }
+}
+
+// 清空搜索历史
+async function clearSearchHistory() {
+    try {
+        await chrome.storage.local.set({ searchHistory: [] });
+        console.log('搜索历史已清空');
+    } catch (error) {
+        console.error('清空搜索历史失败:', error);
+    }
+}
+
+// 定期清理旧记录（保留最近30天的记录）
+function cleanupOldRecords() {
+    chrome.storage.local.get({ searchHistory: [] }, (result) => {
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+        const filteredHistory = result.searchHistory.filter(record => {
+            return new Date(record.timestamp) > thirtyDaysAgo;
+        });
+
+        if (filteredHistory.length !== result.searchHistory.length) {
+            chrome.storage.local.set({ searchHistory: filteredHistory });
+            console.log('已清理过期的搜索记录');
+        }
+    });
+}
+
+// 每天清理一次旧记录
+chrome.alarms.create('cleanupOldRecords', { delayInMinutes: 1, periodInMinutes: 24 * 60 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === 'cleanupOldRecords') {
+        cleanupOldRecords();
+    }
+});
+
+// 收藏功能
+
+// 保存收藏
+async function saveFavorite(favorite) {
+    try {
+        // 获取现有的收藏列表
+        const result = await chrome.storage.local.get({ favorites: [] });
+        let favorites = result.favorites;
+
+        // 按ID去重：如果存在相同ID的记录，删除旧的
+        const existingIndex = favorites.findIndex(existing => existing.id === favorite.id);
+        if (existingIndex !== -1) {
+            console.log('发现相同ID的收藏，删除旧记录:', favorites[existingIndex]);
+            favorites.splice(existingIndex, 1);
+        }
+
+        // 添加新收藏到数组开头
+        favorites.unshift(favorite);
+
+        // 限制收藏数量（最多保存200条）
+        if (favorites.length > 200) {
+            favorites = favorites.slice(0, 200);
+        }
+
+        // 保存到存储
+        await chrome.storage.local.set({ favorites });
+        console.log('收藏已保存:', favorite);
+    } catch (error) {
+        console.error('保存收藏失败:', error);
+        throw error;
+    }
+}
+
+// 获取收藏列表
+async function getFavorites() {
+    try {
+        const result = await chrome.storage.local.get({ favorites: [] });
+        return result.favorites;
+    } catch (error) {
+        console.error('获取收藏列表失败:', error);
+        return [];
+    }
+}
+
+// 删除收藏
+async function deleteFavorite(favoriteId) {
+    try {
+        const result = await chrome.storage.local.get({ favorites: [] });
+        let favorites = result.favorites;
+        let found = false;
+
+        // 首先尝试从根节点删除
+        const originalLength = favorites.length;
+        favorites = favorites.filter(favorite => favorite.id !== favoriteId);
+        
+        if (favorites.length < originalLength) {
+            found = true;
+        } else {
+            // 如果根节点没有找到，从文件夹中查找并删除
+            for (let i = 0; i < favorites.length; i++) {
+                if (favorites[i].type === 'folder' && favorites[i].items) {
+                    const originalItemsLength = favorites[i].items.length;
+                    favorites[i].items = favorites[i].items.filter(item => item.id !== favoriteId);
+                    
+                    if (favorites[i].items.length < originalItemsLength) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!found) {
+            throw new Error('收藏项不存在');
+        }
+
+        await chrome.storage.local.set({ favorites });
+        console.log('收藏已删除:', favoriteId);
+    } catch (error) {
+        console.error('删除收藏失败:', error);
+        throw error;
+    }
+}
+
+// 清空收藏
+async function clearFavorites() {
+    try {
+        await chrome.storage.local.set({ favorites: [] });
+        console.log('收藏列表已清空');
+    } catch (error) {
+        console.error('清空收藏失败:', error);
+        throw error;
+    }
+}
+
+// 移动收藏到文件夹
+async function moveToFolder(favoriteId, folderId) {
+    try {
+        const result = await chrome.storage.local.get({ favorites: [] });
+        let favorites = result.favorites;
+
+        // 找到要移动的收藏项
+        const favoriteIndex = favorites.findIndex(item => item.id === favoriteId);
+        if (favoriteIndex === -1) {
+            throw new Error('收藏项不存在');
+        }
+
+        // 找到目标文件夹
+        const folderIndex = favorites.findIndex(item => item.id === folderId && item.type === 'folder');
+        if (folderIndex === -1) {
+            throw new Error('目标文件夹不存在');
+        }
+
+        // 获取收藏项和文件夹
+        const favoriteItem = favorites[favoriteIndex];
+        const targetFolder = favorites[folderIndex];
+
+        // 确保文件夹有items数组
+        if (!targetFolder.items) {
+            targetFolder.items = [];
+        }
+
+        // 检查收藏项是否已经在文件夹中
+        const existingIndex = targetFolder.items.findIndex(item => item.id === favoriteId);
+        if (existingIndex !== -1) {
+            console.log('收藏项已经在目标文件夹中');
+            return;
+        }
+
+        // 将收藏项添加到文件夹
+        targetFolder.items.unshift(favoriteItem);
+
+        // 从原位置删除收藏项
+        favorites.splice(favoriteIndex, 1);
+
+        // 保存更新后的数据
+        await chrome.storage.local.set({ favorites });
+        console.log('收藏项已移动到文件夹:', favoriteItem.name, '->', targetFolder.name);
+    } catch (error) {
+        console.error('移动收藏到文件夹失败:', error);
+        throw error;
+    }
+}
+
+// 删除文件夹
+async function deleteFolderItem(folderId) {
+    try {
+        const result = await chrome.storage.local.get({ favorites: [] });
+        let favorites = result.favorites;
+
+        // 找到要删除的文件夹
+        const folderIndex = favorites.findIndex(item => item.id === folderId && item.type === 'folder');
+        if (folderIndex === -1) {
+            throw new Error('文件夹不存在');
+        }
+
+        // 删除文件夹
+        const deletedFolder = favorites.splice(folderIndex, 1)[0];
+
+        // 保存更新后的数据
+        await chrome.storage.local.set({ favorites });
+        console.log('文件夹已删除:', deletedFolder.name, '包含', deletedFolder.items?.length || 0, '个收藏项');
+    } catch (error) {
+        console.error('删除文件夹失败:', error);
+        throw error;
+    }
+}
+
+// 添加收藏到文件夹
+async function addToFolder(favorite, folderId) {
+    try {
+        const result = await chrome.storage.local.get({ favorites: [] });
+        let favorites = result.favorites;
+
+        // 找到目标文件夹
+        const folderIndex = favorites.findIndex(item => item.id === folderId && item.type === 'folder');
+        if (folderIndex === -1) {
+            throw new Error('目标文件夹不存在');
+        }
+
+        const targetFolder = favorites[folderIndex];
+
+        // 确保文件夹有items数组
+        if (!targetFolder.items) {
+            targetFolder.items = [];
+        }
+
+        // 检查收藏项是否已经在文件夹中
+        const existingIndex = targetFolder.items.findIndex(item => item.id === favorite.id);
+        if (existingIndex !== -1) {
+            console.log('收藏项已经在目标文件夹中');
+            return;
+        }
+
+        // 将收藏项添加到文件夹
+        targetFolder.items.unshift(favorite);
+
+        // 保存更新后的数据
+        await chrome.storage.local.set({ favorites });
+        console.log('收藏项已添加到文件夹:', favorite.name, '->', targetFolder.name);
+    } catch (error) {
+        console.error('添加收藏到文件夹失败:', error);
+        throw error;
+    }
+}
+
+// 重命名文件夹
+async function renameFolderItem(folderId, newName) {
+    try {
+        const result = await chrome.storage.local.get({ favorites: [] });
+        let favorites = result.favorites;
+
+        // 找到要重命名的文件夹
+        const folderIndex = favorites.findIndex(item => item.id === folderId && item.type === 'folder');
+        if (folderIndex === -1) {
+            throw new Error('文件夹不存在');
+        }
+
+        // 更新文件夹名称
+        const oldName = favorites[folderIndex].name;
+        favorites[folderIndex].name = newName;
+
+        // 保存更新后的数据
+        await chrome.storage.local.set({ favorites });
+        console.log('文件夹已重命名:', oldName, '->', newName);
+    } catch (error) {
+        console.error('重命名文件夹失败:', error);
+        throw error;
+    }
+}
+
+// 移动收藏到根目录
+async function moveToRoot(favoriteId) {
+    try {
+        const result = await chrome.storage.local.get({ favorites: [] });
+        let favorites = result.favorites;
+
+        // 在所有文件夹中查找并移除该收藏项
+        let favoriteItem = null;
+        let foundInFolder = false;
+
+        for (let i = 0; i < favorites.length; i++) {
+            if (favorites[i].type === 'folder' && favorites[i].items) {
+                const itemIndex = favorites[i].items.findIndex(item => item.id === favoriteId);
+                if (itemIndex !== -1) {
+                    favoriteItem = favorites[i].items.splice(itemIndex, 1)[0];
+                    foundInFolder = true;
+                    break;
+                }
+            }
+        }
+
+        if (!foundInFolder || !favoriteItem) {
+            throw new Error('收藏项不存在或不在文件夹中');
+        }
+
+        // 将收藏项添加到根目录
+        favorites.unshift(favoriteItem);
+
+        // 保存更新后的数据
+        await chrome.storage.local.set({ favorites });
+        console.log('收藏项已移动到根目录:', favoriteItem.name);
+    } catch (error) {
+        console.error('移动收藏到根目录失败:', error);
+        throw error;
+    }
+}

@@ -18,7 +18,7 @@
         "matches": [
             "https://poe.game.qq.com/trade2/search/poe2*"
         ],
-        "js": ["content.js"],
+        "js": ["lib/lz-string.js", "content.js"],
         "run_at": "document_end"
     }],
     "action": {

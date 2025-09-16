@@ -1,4 +1,7 @@
 // POE2 交易市场助手后台脚本
+// 导入LZ-String压缩库
+importScripts('lib/lz-string.js');
+
 chrome.runtime.onInstalled.addListener(() => {
     console.log('POE2 交易市场助手已安装');
 });
@@ -140,6 +143,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             sendResponse({ success: true });
         }).catch(error => {
             console.error('❌ 移动收藏到根目录失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    } else if (request.type === 'EXPORT_FOLDER') {
+        console.log('📤 导出文件夹:', request.folderId);
+        exportFolder(request.folderId).then((exportData) => {
+            console.log('✅ 文件夹导出成功');
+            sendResponse({ success: true, data: exportData });
+        }).catch(error => {
+            console.error('❌ 文件夹导出失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
+        return true;
+    } else if (request.type === 'IMPORT_FOLDER') {
+        console.log('📥 导入文件夹:', request.importData);
+        importFolder(request.importData).then((result) => {
+            console.log('✅ 文件夹导入成功');
+            sendResponse({ success: true, data: result });
+        }).catch(error => {
+            console.error('❌ 文件夹导入失败:', error);
             sendResponse({ success: false, error: error.message });
         });
         return true;
@@ -288,7 +311,7 @@ async function deleteFavorite(favoriteId) {
         // 首先尝试从根节点删除
         const originalLength = favorites.length;
         favorites = favorites.filter(favorite => favorite.id !== favoriteId);
-        
+
         if (favorites.length < originalLength) {
             found = true;
         } else {
@@ -297,7 +320,7 @@ async function deleteFavorite(favoriteId) {
                 if (favorites[i].type === 'folder' && favorites[i].items) {
                     const originalItemsLength = favorites[i].items.length;
                     favorites[i].items = favorites[i].items.filter(item => item.id !== favoriteId);
-                    
+
                     if (favorites[i].items.length < originalItemsLength) {
                         found = true;
                         break;
@@ -498,6 +521,149 @@ async function moveToRoot(favoriteId) {
         console.log('收藏项已移动到根目录:', favoriteItem.name);
     } catch (error) {
         console.error('移动收藏到根目录失败:', error);
+        throw error;
+    }
+}
+
+// 导出文件夹
+async function exportFolder(folderId) {
+    try {
+        const result = await chrome.storage.local.get({ favorites: [] });
+        const favorites = result.favorites;
+
+        // 找到要导出的文件夹
+        const folder = favorites.find(item => item.id === folderId && item.type === 'folder');
+        if (!folder) {
+            throw new Error('文件夹不存在');
+        }
+
+        // 创建导出数据
+        const exportData = {
+            version: '1.0.0',
+            type: 'poe2-trading-folder',
+            timestamp: Date.now(),
+            folder: {
+                name: folder.name,
+                items: folder.items || [],
+                exportedAt: new Date().toISOString(),
+                totalItems: (folder.items || []).length
+            }
+        };
+
+        // 转换为JSON字符串
+        const jsonString = JSON.stringify(exportData);
+        console.log('原始JSON大小:', jsonString.length, '字符');
+
+        // 使用LZ-String压缩
+        const compressed = LZString.compressToBase64(jsonString);
+        console.log('压缩后大小:', compressed.length, '字符');
+        console.log('压缩率:', ((1 - compressed.length / jsonString.length) * 100).toFixed(1) + '%');
+
+        return {
+            compressed: compressed,
+            originalSize: jsonString.length,
+            compressedSize: compressed.length,
+            compressionRatio: ((1 - compressed.length / jsonString.length) * 100).toFixed(1),
+            folderName: folder.name,
+            itemCount: (folder.items || []).length
+        };
+    } catch (error) {
+        console.error('导出文件夹失败:', error);
+        throw error;
+    }
+}
+
+// 导入文件夹
+async function importFolder(importData) {
+    try {
+        console.log('开始导入，数据长度:', importData.length);
+
+        // 解压缩数据
+        const decompressed = LZString.decompressFromBase64(importData);
+        if (!decompressed) {
+            throw new Error('数据解压缩失败，请检查导入数据是否正确');
+        }
+
+        // 解析JSON
+        let parsedData;
+        try {
+            parsedData = JSON.parse(decompressed);
+        } catch (e) {
+            throw new Error('数据格式不正确，无法解析JSON');
+        }
+
+        // 验证数据格式
+        if (!parsedData.type || parsedData.type !== 'poe2-trading-folder') {
+            throw new Error('不是有效的POE2交易助手文件夹导出数据');
+        }
+
+        if (!parsedData.folder || !parsedData.folder.name) {
+            throw new Error('导入数据缺少文件夹信息');
+        }
+
+        // 获取当前收藏数据
+        const result = await chrome.storage.local.get({ favorites: [] });
+        let favorites = result.favorites;
+
+        // 检查是否存在同名文件夹
+        const existingFolderIndex = favorites.findIndex(item =>
+            item.type === 'folder' && item.name === parsedData.folder.name
+        );
+
+        let targetFolder;
+        if (existingFolderIndex !== -1) {
+            // 如果存在同名文件夹，合并到现有文件夹
+            targetFolder = favorites[existingFolderIndex];
+            console.log('发现同名文件夹，将合并导入');
+        } else {
+            // 创建新文件夹
+            targetFolder = {
+                id: Date.now() + 'folder' + Math.random().toString(36).substr(2, 9),
+                type: 'folder',
+                name: parsedData.folder.name,
+                items: [],
+                createdAt: new Date().toISOString()
+            };
+            favorites.unshift(targetFolder);
+            console.log('创建新文件夹:', targetFolder.name);
+        }
+
+        // 处理导入的收藏项
+        const importedItems = parsedData.folder.items || [];
+        let newItemsCount = 0;
+        let duplicatesCount = 0;
+
+        for (const item of importedItems) {
+            // 检查是否已存在相同URL的收藏项
+            const existingItem = targetFolder.items.find(existing => existing.url === item.url);
+            if (!existingItem) {
+                // 生成新的ID并添加到文件夹
+                const newItem = {
+                    ...item,
+                    id: Date.now() + 'fav' + Math.random().toString(36).substr(2, 9),
+                    importedAt: new Date().toISOString()
+                };
+                targetFolder.items.push(newItem);
+                newItemsCount++;
+            } else {
+                duplicatesCount++;
+                console.log('跳过重复项:', item.name);
+            }
+        }
+
+        // 保存更新后的数据
+        await chrome.storage.local.set({ favorites });
+
+        return {
+            success: true,
+            folderName: parsedData.folder.name,
+            totalItems: importedItems.length,
+            newItems: newItemsCount,
+            duplicates: duplicatesCount,
+            isNewFolder: existingFolderIndex === -1
+        };
+    } catch (error) {
+        console.error('导入文件夹失败:', error);
         throw error;
     }
 }

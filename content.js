@@ -65,6 +65,7 @@
                     <div class="poe2-favorites-toolbar">
                         <button id="poe2-add-folder-btn" class="poe2-action-btn">📁 新建文件夹</button>
                         <button id="poe2-add-favorite-btn" class="poe2-action-btn">⭐ 收藏当前搜索</button>
+                        <button id="poe2-import-folder-btn" class="poe2-action-btn">📥 导入文件夹</button>
                     </div>
                     <div class="poe2-favorites-content" id="poe2-favorites-list">
                         <div class="poe2-empty">暂无收藏</div>
@@ -507,6 +508,7 @@
                 opacity: 1;
             }
 
+            .poe2-folder-export-btn,
             .poe2-folder-rename-btn,
             .poe2-folder-add-btn,
             .poe2-folder-delete-btn {
@@ -520,6 +522,16 @@
                 align-items: center;
                 justify-content: center;
                 transition: all 0.2s ease;
+            }
+
+            .poe2-folder-export-btn {
+                background: rgba(255, 165, 0, 0.6);
+                color: #1a1a1a;
+            }
+
+            .poe2-folder-export-btn:hover {
+                background: rgba(255, 165, 0, 0.9);
+                transform: scale(1.1);
             }
 
             .poe2-folder-rename-btn {
@@ -963,6 +975,7 @@
         // 收藏功能事件
         const addFolderBtn = panel.querySelector('#poe2-add-folder-btn');
         const addFavoriteBtn = panel.querySelector('#poe2-add-favorite-btn');
+        const importFolderBtn = panel.querySelector('#poe2-import-folder-btn');
 
         refreshBtn.addEventListener('click', () => {
             const activeTab = panel.querySelector('.poe2-tab-btn.active').dataset.tab;
@@ -984,6 +997,7 @@
 
         addFolderBtn.addEventListener('click', createFolder);
         addFavoriteBtn.addEventListener('click', addCurrentSearchToFavorites);
+        importFolderBtn.addEventListener('click', showImportDialog);
     }
 
     // 移除拖拽功能 - 面板现在固定在右侧
@@ -1318,6 +1332,11 @@
                 }
                 const url = this.dataset.url;
                 if (url) {
+                    // 如果目标地址与当前地址相同，则不跳转
+                    if (new URL(url, location.href).href === window.location.href) {
+                        showToast('当前已在该搜索结果页面', 'warning');
+                        return;
+                    }
                     // 在当前页面跳转，而不是打开新标签页
                     window.location.href = url;
                 }
@@ -1413,9 +1432,19 @@
         console.log('检测到国服POE2交易页面，初始化插件');
 
         // 等待页面加载完成后创建面板
-        setTimeout(() => {
+        setTimeout(async () => {
             createHistoryPanel();
-            loadSearchHistory();
+
+            // 恢复上次使用的标签页
+            let lastTab = 'history';
+            try {
+                const store = await chrome.storage.local.get('poe2-last-tab');
+                if (store && store['poe2-last-tab']) {
+                    lastTab = store['poe2-last-tab'];
+                }
+            } catch (e) { }
+
+            switchTab(lastTab);
 
             // 保存当前搜索记录
             setTimeout(() => {
@@ -1459,6 +1488,11 @@
         tabPanels.forEach(tabPanel => {
             tabPanel.classList.toggle('active', tabPanel.id.includes(tabName));
         });
+
+        // 记住当前激活的标签
+        try {
+            chrome.storage.local.set({ 'poe2-last-tab': tabName });
+        } catch (e) { }
 
         // 加载对应数据
         if (tabName === 'history') {
@@ -1586,6 +1620,7 @@
                             📁 ${escapeHtml(folder.name)}
                         </div>
                         <div class="poe2-folder-actions">
+                            <button class="poe2-folder-export-btn" title="导出文件夹">📤</button>
                             <button class="poe2-folder-rename-btn" title="重命名文件夹">✏️</button>
                             <button class="poe2-folder-delete-btn" title="删除文件夹">🗑️</button>
                             <div class="poe2-folder-toggle">▼</div>
@@ -1639,6 +1674,7 @@
 
     // 设置收藏功能事件
     function setupFavoritesEvents(container) {
+        // （移除重复点击处理，统一在下方的主区域点击中处理）
         // 文件夹展开/收起（点击标题区域）
         container.querySelectorAll('.poe2-folder-title').forEach(title => {
             title.addEventListener('click', () => {
@@ -1653,6 +1689,16 @@
                 e.stopPropagation();
                 const folder = toggle.closest('.poe2-folder');
                 folder.classList.toggle('collapsed');
+            });
+        });
+
+        // 文件夹导出按钮
+        container.querySelectorAll('.poe2-folder-export-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const folder = btn.closest('.poe2-folder');
+                const folderId = folder.dataset.id;
+                exportFolderData(folderId);
             });
         });
 
@@ -1685,14 +1731,21 @@
             });
         });
 
-        // 收藏项主要区域点击（跳转）
+        // 收藏项主要区域点击（跳转，若相同URL则仅提示）
         container.querySelectorAll('.poe2-favorite-main').forEach(main => {
-            main.addEventListener('click', () => {
+            main.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
                 const item = main.closest('.poe2-favorite-item');
+                if (!item) return;
                 const url = item.dataset.url;
-                if (url) {
-                    window.location.href = url;
+                if (!url) return;
+                const targetHref = new URL(url, location.href).href;
+                if (targetHref === window.location.href) {
+                    showToast('当前已在该搜索结果页面', 'warning');
+                    return;
                 }
+                window.location.href = url;
             });
         });
 
@@ -1818,16 +1871,20 @@
         const dialogStyle = `
             <style>
                 .poe2-dialog-overlay {
-                    position: fixed;
-                    top: 0;
-                    left: 0;
-                    right: 0;
-                    bottom: 0;
-                    background: rgba(0, 0, 0, 0.7);
-                    z-index: 20000;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
+                    position: fixed !important;
+                    top: 0 !important;
+                    left: 0 !important;
+                    right: 0 !important;
+                    bottom: 0 !important;
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    background: rgba(0, 0, 0, 0.7) !important;
+                    z-index: 999999 !important;
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
                 }
 
                 .poe2-dialog {
@@ -1948,6 +2005,7 @@
                     background: rgba(128, 128, 128, 0.8);
                     transform: translateY(-1px);
                 }
+
             </style>
         `;
 
@@ -2446,6 +2504,241 @@
     // 生成唯一ID
     function generateId() {
         return Date.now().toString(36) + Math.random().toString(36).substr(2);
+    }
+
+    // 导出文件夹数据
+    async function exportFolderData(folderId) {
+        try {
+            const response = await chrome.runtime.sendMessage({
+                type: 'EXPORT_FOLDER',
+                folderId: folderId
+            });
+
+            if (response.success) {
+                const exportData = response.data;
+
+                // 显示导出对话框
+                showExportDialog(exportData.folderName, exportData.compressed);
+
+                showToast(`文件夹"${exportData.folderName}"导出成功！压缩率: ${exportData.compressionRatio}%`, 'success');
+            } else {
+                showToast('导出失败: ' + (response.error || '未知错误'), 'error');
+            }
+        } catch (error) {
+            console.error('导出文件夹失败:', error);
+            showToast('导出失败: ' + error.message, 'error');
+        }
+    }
+
+    // 显示导出对话框
+    function showExportDialog(folderName, compressedData) {
+        // 移除现有的对话框
+        const existingDialog = document.querySelector('.poe2-export-dialog-overlay');
+        if (existingDialog) {
+            existingDialog.remove();
+        }
+
+        // 创建对话框HTML
+        const dialogHtml = `
+            <div class="poe2-export-dialog-overlay poe2-input-dialog-overlay">
+                <div class="poe2-input-dialog">
+                    <div class="poe2-input-dialog-header">
+                        <h3 class="poe2-input-dialog-title">📤 导出文件夹: ${escapeHtml(folderName)}</h3>
+                    </div>
+                    <div class="poe2-input-dialog-content">
+                        <label class="poe2-input-dialog-label">导入代码（点击复制）:</label>
+                        <textarea readonly class="poe2-export-textarea poe2-input-dialog-input" 
+                                  style="height: 120px; resize: vertical; font-family: 'Courier New', monospace; font-size: 11px;"
+                                  onclick="this.select()">${compressedData}</textarea>
+                    </div>
+                    <div class="poe2-input-dialog-footer">
+                        <button class="poe2-input-dialog-btn poe2-input-dialog-btn-secondary">关闭</button>
+                        <button class="poe2-export-copy-btn poe2-input-dialog-btn poe2-input-dialog-btn-primary">📋 复制代码</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // 添加到页面
+        document.body.insertAdjacentHTML('beforeend', dialogHtml);
+
+        const overlay = document.querySelector('.poe2-export-dialog-overlay');
+        const textarea = overlay.querySelector('.poe2-export-textarea');
+        const closeBtn = overlay.querySelector('.poe2-input-dialog-btn-secondary');
+        const copyBtn = overlay.querySelector('.poe2-export-copy-btn');
+
+        // 关闭对话框
+        const closeDialog = () => {
+            overlay.remove();
+        };
+
+        // 事件监听器
+        closeBtn.addEventListener('click', closeDialog);
+
+        // 复制到剪贴板
+        copyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(compressedData);
+                showToast('导入代码已复制到剪贴板！', 'success');
+                copyBtn.innerHTML = '✅ 已复制';
+                setTimeout(() => {
+                    copyBtn.innerHTML = '📋 复制代码';
+                }, 2000);
+            } catch (error) {
+                // 如果无法使用现代API，使用传统方法
+                textarea.select();
+                document.execCommand('copy');
+                showToast('导入代码已复制到剪贴板！', 'success');
+            }
+        });
+
+        // 点击遮罩关闭
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) closeDialog();
+        });
+
+        // 键盘事件
+        document.addEventListener('keydown', function escapeHandler(e) {
+            if (e.key === 'Escape') {
+                document.removeEventListener('keydown', escapeHandler);
+                closeDialog();
+            }
+        });
+
+        // 自动选中文本区域内容
+        setTimeout(() => {
+            textarea.select();
+        }, 100);
+    }
+
+    // 显示导入对话框
+    function showImportDialog() {
+        // 移除现有的对话框
+        const existingDialog = document.querySelector('.poe2-import-dialog-overlay');
+        if (existingDialog) {
+            existingDialog.remove();
+        }
+
+        // 创建对话框HTML
+        const dialogHtml = `
+            <div class="poe2-import-dialog-overlay poe2-input-dialog-overlay">
+                <div class="poe2-input-dialog">
+                    <div class="poe2-input-dialog-header">
+                        <h3 class="poe2-input-dialog-title">📥 导入文件夹</h3>
+                    </div>
+                    <div class="poe2-input-dialog-content">
+                        <label class="poe2-input-dialog-label">请粘贴导入代码:</label>
+                        <textarea class="poe2-import-textarea poe2-input-dialog-input" 
+                                  style="height: 120px; resize: vertical; font-family: 'Courier New', monospace; font-size: 11px;"
+                                  placeholder="请粘贴从其他用户处获得的导入代码..."></textarea>
+                    </div>
+                    <div class="poe2-input-dialog-footer">
+                        <button class="poe2-input-dialog-btn poe2-input-dialog-btn-secondary">取消</button>
+                        <button class="poe2-import-paste-btn poe2-input-dialog-btn" style="background: rgba(135, 206, 235, 0.6); color: #1a1a1a;">📋 粘贴</button>
+                        <button class="poe2-import-confirm-btn poe2-input-dialog-btn poe2-input-dialog-btn-primary">📥 导入</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // 添加到页面
+        document.body.insertAdjacentHTML('beforeend', dialogHtml);
+
+        const overlay = document.querySelector('.poe2-import-dialog-overlay');
+        const textarea = overlay.querySelector('.poe2-import-textarea');
+        const cancelBtn = overlay.querySelector('.poe2-input-dialog-btn-secondary');
+        const pasteBtn = overlay.querySelector('.poe2-import-paste-btn');
+        const confirmBtn = overlay.querySelector('.poe2-import-confirm-btn');
+
+        // 关闭对话框
+        const closeDialog = () => {
+            overlay.remove();
+        };
+
+        // 事件监听器
+        cancelBtn.addEventListener('click', closeDialog);
+
+        // 从剪贴板粘贴
+        pasteBtn.addEventListener('click', async () => {
+            try {
+                const text = await navigator.clipboard.readText();
+                textarea.value = text;
+                showToast('已从剪贴板粘贴内容！', 'success');
+            } catch (error) {
+                showToast('无法访问剪贴板，请手动粘贴', 'warning');
+            }
+        });
+
+        // 确认导入
+        confirmBtn.addEventListener('click', async () => {
+            const importData = textarea.value.trim();
+            if (!importData) {
+                showToast('请输入导入代码', 'warning');
+                return;
+            }
+
+            try {
+                confirmBtn.disabled = true;
+                confirmBtn.innerHTML = '⏳ 导入中...';
+
+                await importFolderData(importData);
+                closeDialog();
+            } catch (error) {
+                console.error('导入失败:', error);
+                confirmBtn.disabled = false;
+                confirmBtn.innerHTML = '📥 导入';
+            }
+        });
+
+        // 点击遮罩关闭
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) closeDialog();
+        });
+
+        // 键盘事件
+        document.addEventListener('keydown', function escapeHandler(e) {
+            if (e.key === 'Escape') {
+                document.removeEventListener('keydown', escapeHandler);
+                closeDialog();
+            }
+        });
+
+        // 自动聚焦到文本区域
+        setTimeout(() => {
+            textarea.focus();
+        }, 100);
+    }
+
+    // 导入文件夹数据
+    async function importFolderData(importData) {
+        try {
+            const response = await chrome.runtime.sendMessage({
+                type: 'IMPORT_FOLDER',
+                importData: importData
+            });
+
+            if (response.success) {
+                const result = response.data;
+
+                // 显示导入结果
+                let message = `文件夹"${result.folderName}"导入成功！\n`;
+                message += `总计 ${result.totalItems} 项，`;
+                message += `新增 ${result.newItems} 项`;
+                if (result.duplicates > 0) {
+                    message += `，跳过 ${result.duplicates} 个重复项`;
+                }
+
+                showToast(message, 'success', 4000);
+
+                // 刷新收藏列表
+                loadFavorites();
+            } else {
+                showToast('导入失败: ' + (response.error || '未知错误'), 'error');
+            }
+        } catch (error) {
+            console.error('导入文件夹失败:', error);
+            showToast('导入失败: ' + error.message, 'error');
+        }
     }
 
     // 监听来自background的消息

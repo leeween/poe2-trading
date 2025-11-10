@@ -1,10 +1,16 @@
-// POE2 交易市场助手后台脚本
+// POE 交易市场助手后台脚本
 // 导入LZ-String压缩库
 importScripts('lib/lz-string.js');
 
 chrome.runtime.onInstalled.addListener(() => {
-    console.log('POE2 交易市场助手已安装');
+    console.log('POE 交易市场助手已安装');
 });
+
+// 获取存储键名（根据版本）
+function getStorageKey(version, key) {
+    const versionPrefix = version === 'poe1' ? 'poe1' : 'poe2';
+    return `${versionPrefix}-${key}`;
+}
 
 // 处理插件图标点击
 chrome.action.onClicked.addListener((tab) => {
@@ -28,9 +34,11 @@ chrome.action.onClicked.addListener((tab) => {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log('🔧 Background收到消息:', request.type);
 
+    const version = request.version || 'poe2'; // 默认 poe2 向后兼容
+
     if (request.type === 'SAVE_SEARCH_RECORD') {
         console.log('💾 开始保存搜索记录:', request.data);
-        saveSearchRecord(request.data).then(() => {
+        saveSearchRecord(request.data, version).then(() => {
             console.log('✅ 搜索记录保存成功');
             sendResponse({ success: true });
         }).catch(error => {
@@ -40,7 +48,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true; // 保持消息通道开放
     } else if (request.type === 'GET_SEARCH_HISTORY') {
         console.log('📚 获取搜索历史');
-        getSearchHistory().then(history => {
+        getSearchHistory(version).then(history => {
             console.log('✅ 获取到历史记录:', history.length, '条');
             sendResponse({ success: true, data: history });
         }).catch(error => {
@@ -49,14 +57,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
         return true; // 保持消息通道开放
     } else if (request.type === 'DELETE_SEARCH_RECORD') {
-        deleteSearchRecord(request.id).then(() => {
+        deleteSearchRecord(request.id, version).then(() => {
             sendResponse({ success: true });
         }).catch(error => {
             sendResponse({ success: false, error: error.message });
         });
         return true;
     } else if (request.type === 'CLEAR_SEARCH_HISTORY') {
-        clearSearchHistory().then(() => {
+        clearSearchHistory(version).then(() => {
             sendResponse({ success: true });
         }).catch(error => {
             sendResponse({ success: false, error: error.message });
@@ -64,7 +72,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     } else if (request.type === 'SAVE_FAVORITE') {
         console.log('💾 开始保存收藏:', request.data);
-        saveFavorite(request.data).then(() => {
+        saveFavorite(request.data, version).then(() => {
             console.log('✅ 收藏保存成功');
             sendResponse({ success: true });
         }).catch(error => {
@@ -74,7 +82,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     } else if (request.type === 'GET_FAVORITES') {
         console.log('📚 获取收藏列表');
-        getFavorites().then(favorites => {
+        getFavorites(version).then(favorites => {
             console.log('✅ 获取到收藏:', favorites.length, '条');
             sendResponse({ success: true, favorites: favorites });
         }).catch(error => {
@@ -83,14 +91,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
         return true;
     } else if (request.type === 'DELETE_FAVORITE') {
-        deleteFavorite(request.id).then(() => {
+        deleteFavorite(request.id, version).then(() => {
             sendResponse({ success: true });
         }).catch(error => {
             sendResponse({ success: false, error: error.message });
         });
         return true;
     } else if (request.type === 'CLEAR_FAVORITES') {
-        clearFavorites().then(() => {
+        clearFavorites(version).then(() => {
             sendResponse({ success: true });
         }).catch(error => {
             sendResponse({ success: false, error: error.message });
@@ -98,7 +106,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     } else if (request.type === 'MOVE_TO_FOLDER') {
         console.log('📁 移动收藏到文件夹:', request.favoriteId, '->', request.folderId);
-        moveToFolder(request.favoriteId, request.folderId).then(() => {
+        moveToFolder(request.favoriteId, request.folderId, version).then(() => {
             console.log('✅ 收藏移动成功');
             sendResponse({ success: true });
         }).catch(error => {
@@ -108,7 +116,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     } else if (request.type === 'DELETE_FOLDER') {
         console.log('🗑️ 删除文件夹:', request.id);
-        deleteFolderItem(request.id).then(() => {
+        deleteFolderItem(request.id, version).then(() => {
             console.log('✅ 文件夹删除成功');
             sendResponse({ success: true });
         }).catch(error => {
@@ -118,7 +126,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     } else if (request.type === 'ADD_TO_FOLDER') {
         console.log('⭐ 添加收藏到文件夹:', request.favorite.name, '->', request.folderId);
-        addToFolder(request.favorite, request.folderId).then(() => {
+        addToFolder(request.favorite, request.folderId, version).then(() => {
             console.log('✅ 收藏添加到文件夹成功');
             sendResponse({ success: true });
         }).catch(error => {
@@ -128,7 +136,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     } else if (request.type === 'RENAME_FOLDER') {
         console.log('✏️ 重命名文件夹:', request.id, '->', request.newName);
-        renameFolderItem(request.id, request.newName).then(() => {
+        renameFolderItem(request.id, request.newName, version).then(() => {
             console.log('✅ 文件夹重命名成功');
             sendResponse({ success: true });
         }).catch(error => {
@@ -138,7 +146,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     } else if (request.type === 'MOVE_TO_ROOT') {
         console.log('📤 移动收藏到根目录:', request.favoriteId);
-        moveToRoot(request.favoriteId).then(() => {
+        moveToRoot(request.favoriteId, version).then(() => {
             console.log('✅ 收藏移动到根目录成功');
             sendResponse({ success: true });
         }).catch(error => {
@@ -148,7 +156,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     } else if (request.type === 'EXPORT_FOLDER') {
         console.log('📤 导出文件夹:', request.folderId);
-        exportFolder(request.folderId).then((exportData) => {
+        exportFolder(request.folderId, version).then((exportData) => {
             console.log('✅ 文件夹导出成功');
             sendResponse({ success: true, data: exportData });
         }).catch(error => {
@@ -158,7 +166,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     } else if (request.type === 'IMPORT_FOLDER') {
         console.log('📥 导入文件夹:', request.importData);
-        importFolder(request.importData).then((result) => {
+        importFolder(request.importData, version).then((result) => {
             console.log('✅ 文件夹导入成功');
             sendResponse({ success: true, data: result });
         }).catch(error => {
@@ -170,11 +178,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 // 保存搜索记录
-async function saveSearchRecord(record) {
+async function saveSearchRecord(record, version = 'poe2') {
     try {
+        const storageKey = getStorageKey(version, 'searchHistory');
         // 获取现有的搜索历史
-        const result = await chrome.storage.local.get({ searchHistory: [] });
-        let searchHistory = result.searchHistory;
+        const result = await chrome.storage.local.get({ [storageKey]: [] });
+        let searchHistory = result[storageKey];
 
         // 按ID去重：如果存在相同ID的记录，删除旧的
         const existingIndex = searchHistory.findIndex(existing => existing.id === record.id);
@@ -192,7 +201,7 @@ async function saveSearchRecord(record) {
         }
 
         // 保存到存储
-        await chrome.storage.local.set({ searchHistory });
+        await chrome.storage.local.set({ [storageKey]: searchHistory });
         console.log('搜索记录已保存:', record);
     } catch (error) {
         console.error('保存搜索记录失败:', error);
@@ -200,10 +209,11 @@ async function saveSearchRecord(record) {
 }
 
 // 获取搜索历史
-async function getSearchHistory() {
+async function getSearchHistory(version = 'poe2') {
     try {
-        const result = await chrome.storage.local.get({ searchHistory: [] });
-        return result.searchHistory;
+        const storageKey = getStorageKey(version, 'searchHistory');
+        const result = await chrome.storage.local.get({ [storageKey]: [] });
+        return result[storageKey];
     } catch (error) {
         console.error('获取搜索历史失败:', error);
         return [];
@@ -211,11 +221,12 @@ async function getSearchHistory() {
 }
 
 // 删除搜索记录
-async function deleteSearchRecord(recordId) {
+async function deleteSearchRecord(recordId, version = 'poe2') {
     try {
-        const result = await chrome.storage.local.get({ searchHistory: [] });
-        const searchHistory = result.searchHistory.filter(record => record.id !== recordId);
-        await chrome.storage.local.set({ searchHistory });
+        const storageKey = getStorageKey(version, 'searchHistory');
+        const result = await chrome.storage.local.get({ [storageKey]: [] });
+        const searchHistory = result[storageKey].filter(record => record.id !== recordId);
+        await chrome.storage.local.set({ [storageKey]: searchHistory });
         console.log('搜索记录已删除:', recordId);
     } catch (error) {
         console.error('删除搜索记录失败:', error);
@@ -223,9 +234,10 @@ async function deleteSearchRecord(recordId) {
 }
 
 // 清空搜索历史
-async function clearSearchHistory() {
+async function clearSearchHistory(version = 'poe2') {
     try {
-        await chrome.storage.local.set({ searchHistory: [] });
+        const storageKey = getStorageKey(version, 'searchHistory');
+        await chrome.storage.local.set({ [storageKey]: [] });
         console.log('搜索历史已清空');
     } catch (error) {
         console.error('清空搜索历史失败:', error);
@@ -234,18 +246,23 @@ async function clearSearchHistory() {
 
 // 定期清理旧记录（保留最近30天的记录）
 function cleanupOldRecords() {
-    chrome.storage.local.get({ searchHistory: [] }, (result) => {
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    // 清理 POE1 和 POE2 的记录
+    ['poe1', 'poe2'].forEach(version => {
+        const storageKey = getStorageKey(version, 'searchHistory');
+        chrome.storage.local.get({ [storageKey]: [] }, (result) => {
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-        const filteredHistory = result.searchHistory.filter(record => {
-            return new Date(record.timestamp) > thirtyDaysAgo;
+            const searchHistory = result[storageKey];
+            const filteredHistory = searchHistory.filter(record => {
+                return new Date(record.timestamp) > thirtyDaysAgo;
+            });
+
+            if (filteredHistory.length !== searchHistory.length) {
+                chrome.storage.local.set({ [storageKey]: filteredHistory });
+                console.log(`已清理过期的${version}搜索记录`);
+            }
         });
-
-        if (filteredHistory.length !== result.searchHistory.length) {
-            chrome.storage.local.set({ searchHistory: filteredHistory });
-            console.log('已清理过期的搜索记录');
-        }
     });
 }
 
@@ -260,11 +277,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // 收藏功能
 
 // 保存收藏
-async function saveFavorite(favorite) {
+async function saveFavorite(favorite, version = 'poe2') {
     try {
+        const storageKey = getStorageKey(version, 'favorites');
         // 获取现有的收藏列表
-        const result = await chrome.storage.local.get({ favorites: [] });
-        let favorites = result.favorites;
+        const result = await chrome.storage.local.get({ [storageKey]: [] });
+        let favorites = result[storageKey];
 
         // 按ID去重：如果存在相同ID的记录，删除旧的
         const existingIndex = favorites.findIndex(existing => existing.id === favorite.id);
@@ -282,7 +300,7 @@ async function saveFavorite(favorite) {
         }
 
         // 保存到存储
-        await chrome.storage.local.set({ favorites });
+        await chrome.storage.local.set({ [storageKey]: favorites });
         console.log('收藏已保存:', favorite);
     } catch (error) {
         console.error('保存收藏失败:', error);
@@ -291,10 +309,11 @@ async function saveFavorite(favorite) {
 }
 
 // 获取收藏列表
-async function getFavorites() {
+async function getFavorites(version = 'poe2') {
     try {
-        const result = await chrome.storage.local.get({ favorites: [] });
-        return result.favorites;
+        const storageKey = getStorageKey(version, 'favorites');
+        const result = await chrome.storage.local.get({ [storageKey]: [] });
+        return result[storageKey];
     } catch (error) {
         console.error('获取收藏列表失败:', error);
         return [];
@@ -302,10 +321,11 @@ async function getFavorites() {
 }
 
 // 删除收藏
-async function deleteFavorite(favoriteId) {
+async function deleteFavorite(favoriteId, version = 'poe2') {
     try {
-        const result = await chrome.storage.local.get({ favorites: [] });
-        let favorites = result.favorites;
+        const storageKey = getStorageKey(version, 'favorites');
+        const result = await chrome.storage.local.get({ [storageKey]: [] });
+        let favorites = result[storageKey];
         let found = false;
 
         // 首先尝试从根节点删除
@@ -333,7 +353,7 @@ async function deleteFavorite(favoriteId) {
             throw new Error('收藏项不存在');
         }
 
-        await chrome.storage.local.set({ favorites });
+        await chrome.storage.local.set({ [storageKey]: favorites });
         console.log('收藏已删除:', favoriteId);
     } catch (error) {
         console.error('删除收藏失败:', error);
@@ -342,9 +362,10 @@ async function deleteFavorite(favoriteId) {
 }
 
 // 清空收藏
-async function clearFavorites() {
+async function clearFavorites(version = 'poe2') {
     try {
-        await chrome.storage.local.set({ favorites: [] });
+        const storageKey = getStorageKey(version, 'favorites');
+        await chrome.storage.local.set({ [storageKey]: [] });
         console.log('收藏列表已清空');
     } catch (error) {
         console.error('清空收藏失败:', error);
@@ -353,10 +374,11 @@ async function clearFavorites() {
 }
 
 // 移动收藏到文件夹
-async function moveToFolder(favoriteId, folderId) {
+async function moveToFolder(favoriteId, folderId, version = 'poe2') {
     try {
-        const result = await chrome.storage.local.get({ favorites: [] });
-        let favorites = result.favorites;
+        const storageKey = getStorageKey(version, 'favorites');
+        const result = await chrome.storage.local.get({ [storageKey]: [] });
+        let favorites = result[storageKey];
 
         // 找到要移动的收藏项
         const favoriteIndex = favorites.findIndex(item => item.id === favoriteId);
@@ -393,7 +415,7 @@ async function moveToFolder(favoriteId, folderId) {
         favorites.splice(favoriteIndex, 1);
 
         // 保存更新后的数据
-        await chrome.storage.local.set({ favorites });
+        await chrome.storage.local.set({ [storageKey]: favorites });
         console.log('收藏项已移动到文件夹:', favoriteItem.name, '->', targetFolder.name);
     } catch (error) {
         console.error('移动收藏到文件夹失败:', error);
@@ -402,10 +424,11 @@ async function moveToFolder(favoriteId, folderId) {
 }
 
 // 删除文件夹
-async function deleteFolderItem(folderId) {
+async function deleteFolderItem(folderId, version = 'poe2') {
     try {
-        const result = await chrome.storage.local.get({ favorites: [] });
-        let favorites = result.favorites;
+        const storageKey = getStorageKey(version, 'favorites');
+        const result = await chrome.storage.local.get({ [storageKey]: [] });
+        let favorites = result[storageKey];
 
         // 找到要删除的文件夹
         const folderIndex = favorites.findIndex(item => item.id === folderId && item.type === 'folder');
@@ -417,7 +440,7 @@ async function deleteFolderItem(folderId) {
         const deletedFolder = favorites.splice(folderIndex, 1)[0];
 
         // 保存更新后的数据
-        await chrome.storage.local.set({ favorites });
+        await chrome.storage.local.set({ [storageKey]: favorites });
         console.log('文件夹已删除:', deletedFolder.name, '包含', deletedFolder.items?.length || 0, '个收藏项');
     } catch (error) {
         console.error('删除文件夹失败:', error);
@@ -426,10 +449,11 @@ async function deleteFolderItem(folderId) {
 }
 
 // 添加收藏到文件夹
-async function addToFolder(favorite, folderId) {
+async function addToFolder(favorite, folderId, version = 'poe2') {
     try {
-        const result = await chrome.storage.local.get({ favorites: [] });
-        let favorites = result.favorites;
+        const storageKey = getStorageKey(version, 'favorites');
+        const result = await chrome.storage.local.get({ [storageKey]: [] });
+        let favorites = result[storageKey];
 
         // 找到目标文件夹
         const folderIndex = favorites.findIndex(item => item.id === folderId && item.type === 'folder');
@@ -455,7 +479,7 @@ async function addToFolder(favorite, folderId) {
         targetFolder.items.unshift(favorite);
 
         // 保存更新后的数据
-        await chrome.storage.local.set({ favorites });
+        await chrome.storage.local.set({ [storageKey]: favorites });
         console.log('收藏项已添加到文件夹:', favorite.name, '->', targetFolder.name);
     } catch (error) {
         console.error('添加收藏到文件夹失败:', error);
@@ -464,10 +488,11 @@ async function addToFolder(favorite, folderId) {
 }
 
 // 重命名文件夹
-async function renameFolderItem(folderId, newName) {
+async function renameFolderItem(folderId, newName, version = 'poe2') {
     try {
-        const result = await chrome.storage.local.get({ favorites: [] });
-        let favorites = result.favorites;
+        const storageKey = getStorageKey(version, 'favorites');
+        const result = await chrome.storage.local.get({ [storageKey]: [] });
+        let favorites = result[storageKey];
 
         // 找到要重命名的文件夹
         const folderIndex = favorites.findIndex(item => item.id === folderId && item.type === 'folder');
@@ -480,7 +505,7 @@ async function renameFolderItem(folderId, newName) {
         favorites[folderIndex].name = newName;
 
         // 保存更新后的数据
-        await chrome.storage.local.set({ favorites });
+        await chrome.storage.local.set({ [storageKey]: favorites });
         console.log('文件夹已重命名:', oldName, '->', newName);
     } catch (error) {
         console.error('重命名文件夹失败:', error);
@@ -489,10 +514,11 @@ async function renameFolderItem(folderId, newName) {
 }
 
 // 移动收藏到根目录
-async function moveToRoot(favoriteId) {
+async function moveToRoot(favoriteId, version = 'poe2') {
     try {
-        const result = await chrome.storage.local.get({ favorites: [] });
-        let favorites = result.favorites;
+        const storageKey = getStorageKey(version, 'favorites');
+        const result = await chrome.storage.local.get({ [storageKey]: [] });
+        let favorites = result[storageKey];
 
         // 在所有文件夹中查找并移除该收藏项
         let favoriteItem = null;
@@ -517,7 +543,7 @@ async function moveToRoot(favoriteId) {
         favorites.unshift(favoriteItem);
 
         // 保存更新后的数据
-        await chrome.storage.local.set({ favorites });
+        await chrome.storage.local.set({ [storageKey]: favorites });
         console.log('收藏项已移动到根目录:', favoriteItem.name);
     } catch (error) {
         console.error('移动收藏到根目录失败:', error);
@@ -526,10 +552,11 @@ async function moveToRoot(favoriteId) {
 }
 
 // 导出文件夹
-async function exportFolder(folderId) {
+async function exportFolder(folderId, version = 'poe2') {
     try {
-        const result = await chrome.storage.local.get({ favorites: [] });
-        const favorites = result.favorites;
+        const storageKey = getStorageKey(version, 'favorites');
+        const result = await chrome.storage.local.get({ [storageKey]: [] });
+        const favorites = result[storageKey];
 
         // 找到要导出的文件夹
         const folder = favorites.find(item => item.id === folderId && item.type === 'folder');
@@ -574,7 +601,7 @@ async function exportFolder(folderId) {
 }
 
 // 导入文件夹
-async function importFolder(importData) {
+async function importFolder(importData, version = 'poe2') {
     try {
         console.log('开始导入，数据长度:', importData.length);
 
@@ -602,8 +629,9 @@ async function importFolder(importData) {
         }
 
         // 获取当前收藏数据
-        const result = await chrome.storage.local.get({ favorites: [] });
-        let favorites = result.favorites;
+        const storageKey = getStorageKey(version, 'favorites');
+        const result = await chrome.storage.local.get({ [storageKey]: [] });
+        let favorites = result[storageKey];
 
         // 检查是否存在同名文件夹
         const existingFolderIndex = favorites.findIndex(item =>
@@ -652,7 +680,7 @@ async function importFolder(importData) {
         }
 
         // 保存更新后的数据
-        await chrome.storage.local.set({ favorites });
+        await chrome.storage.local.set({ [storageKey]: favorites });
 
         return {
             success: true,

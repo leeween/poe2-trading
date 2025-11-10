@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
-    "name": "POE2 交易市场助手",
-    "version": "1.0.0",
-    "description": "记录Path of Exile 2交易市场的搜索记录，提供搜索历史管理功能",
+    "name": "POE 交易市场助手",
+    "version": "1.1.0",
+    "description": "记录Path of Exile 1/2国服交易市场的搜索记录，提供搜索历史与收藏管理功能，支持POE1和POE2数据隔离",
     "permissions": [
         "storage",
         "activeTab",
@@ -16,13 +16,14 @@
     },
     "content_scripts": [{
         "matches": [
-            "https://poe.game.qq.com/trade2/search/poe2*"
+            "https://poe.game.qq.com/trade*",
+            "https://poe.game.qq.com/trade2*"
         ],
         "js": ["lib/lz-string.js", "content.js"],
         "run_at": "document_end"
     }],
     "action": {
-        "default_title": "POE2 交易市场助手",
+        "default_title": "POE 交易市场助手",
         "default_icon": {
             "16": "icons/icon16.png",
             "48": "icons/icon48.png",

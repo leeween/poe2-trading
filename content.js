@@ -1,8 +1,24 @@
-// POE2 交易市场搜索记录内容脚本
+// POE 交易市场搜索记录内容脚本
 (function () {
     'use strict';
 
-    console.log('POE2 交易助手已加载');
+    // 检测当前是 POE1 还是 POE2
+    function getPoeVersion() {
+        const path = window.location.pathname;
+        if (path.startsWith('/trade2')) {
+            return 'poe2';
+        } else if (path.startsWith('/trade')) {
+            return 'poe1';
+        }
+        // 默认返回 poe2（向后兼容）
+        return 'poe2';
+    }
+
+    const poeVersion = getPoeVersion();
+    const versionPrefix = poeVersion === 'poe1' ? 'poe1' : 'poe2';
+    const versionName = poeVersion === 'poe1' ? 'POE1' : 'POE2';
+
+    console.log(`${versionName} 交易助手已加载`);
 
     let historyPanel = null;
     let searchHistory = [];
@@ -45,7 +61,7 @@
         panel.id = 'poe2-main-panel';
         panel.innerHTML = `
             <div class="poe2-history-header">
-                <h3><span class="poe2-logo">⚖</span>POE2 国服交易助手</h3>
+                <h3><span class="poe2-logo">⚖</span>${versionName} 国服交易助手</h3>
                 <div class="poe2-history-controls">
                     <button id="poe2-refresh-btn" title="刷新">↻</button>
                     <button id="poe2-clear-btn" title="清空历史">✕</button>
@@ -1013,15 +1029,17 @@
         toggleBtn.innerHTML = isCollapsed ? '►' : '◄';
 
         // 保存当前状态
-        chrome.storage.local.set({ 'poe2-panel-collapsed': isCollapsed });
+        const storageKey = `${versionPrefix}-panel-collapsed`;
+        chrome.storage.local.set({ [storageKey]: isCollapsed });
         console.log('保存面板状态:', isCollapsed ? '收起' : '展开');
     }
 
     // 恢复面板状态
     async function restorePanelState() {
         try {
-            const result = await chrome.storage.local.get({ 'poe2-panel-collapsed': false });
-            const isCollapsed = result['poe2-panel-collapsed'];
+            const storageKey = `${versionPrefix}-panel-collapsed`;
+            const result = await chrome.storage.local.get({ [storageKey]: false });
+            const isCollapsed = result[storageKey];
 
             console.log('恢复面板状态:', isCollapsed ? '收起' : '展开');
 
@@ -1097,16 +1115,40 @@
         }
 
         // 针对国服特殊处理URL路径参数
-        if (isQQServer && url.pathname.includes('/trade2/search/poe2/')) {
-            const pathParts = url.pathname.split('/');
-            if (pathParts.length >= 6) {
-                const league = decodeURIComponent(pathParts[4]);
-                if (league) {
-                    searchParams['league'] = league;
+        if (isQQServer) {
+            // POE2 路径格式: /trade2/search/poe2/{league}/{searchId}
+            if (url.pathname.includes('/trade2/search/poe2/')) {
+                const pathParts = url.pathname.split('/');
+                if (pathParts.length >= 6) {
+                    const league = decodeURIComponent(pathParts[4]);
+                    if (league) {
+                        searchParams['league'] = league;
+                    }
+                    const searchId = pathParts[5];
+                    if (searchId) {
+                        searchParams['search_id'] = searchId;
+                    }
                 }
-                const searchId = pathParts[5];
-                if (searchId) {
-                    searchParams['search_id'] = searchId;
+            }
+            // POE1 路径格式: /trade/search/{league}/{searchId}
+            // 例如: /trade/search/S28%E8%B5%9B%E5%AD%A3/8nODaO2iV
+            else if (url.pathname.includes('/trade/search/')) {
+                const pathParts = url.pathname.split('/').filter(part => part); // 过滤空字符串
+                // 路径应该是: ['trade', 'search', 'S28%E8%B5%9B%E5%AD%A3', '8nODaO2iV']
+                const searchIndex = pathParts.indexOf('search');
+                if (searchIndex !== -1 && searchIndex + 1 < pathParts.length) {
+                    // 提取 league（需要解码 URL 编码）
+                    const league = decodeURIComponent(pathParts[searchIndex + 1]);
+                    if (league && league !== 'search') {
+                        searchParams['league'] = league;
+                    }
+                    // 提取 searchId
+                    if (searchIndex + 2 < pathParts.length) {
+                        const searchId = pathParts[searchIndex + 2];
+                        if (searchId) {
+                            searchParams['search_id'] = searchId;
+                        }
+                    }
                 }
             }
         }
@@ -1208,7 +1250,8 @@
 
         chrome.runtime.sendMessage({
             type: 'SAVE_SEARCH_RECORD',
-            data: searchRecord
+            data: searchRecord,
+            version: poeVersion
         }).then(() => {
             console.log('搜索记录已保存:', searchRecord);
             loadSearchHistory(); // 刷新历史记录显示
@@ -1221,7 +1264,8 @@
     async function loadSearchHistory() {
         try {
             const response = await chrome.runtime.sendMessage({
-                type: 'GET_SEARCH_HISTORY'
+                type: 'GET_SEARCH_HISTORY',
+                version: poeVersion
             });
 
             if (response && response.success) {
@@ -1351,7 +1395,8 @@
                     try {
                         await chrome.runtime.sendMessage({
                             type: 'DELETE_SEARCH_RECORD',
-                            id: id
+                            id: id,
+                            version: poeVersion
                         });
                         loadSearchHistory();
                     } catch (error) {
@@ -1385,7 +1430,8 @@
 
         try {
             await chrome.runtime.sendMessage({
-                type: 'CLEAR_SEARCH_HISTORY'
+                type: 'CLEAR_SEARCH_HISTORY',
+                version: poeVersion
             });
             loadSearchHistory();
             showToast('搜索历史已清空', 'success');
@@ -1414,7 +1460,12 @@
             currentUrl = window.location.href;
             console.log('URL changed:', currentUrl);
             setTimeout(() => {
-                if (window.location.href.includes('poe.game.qq.com/trade2/search/poe2')) {
+                // 检查是否为POE1或POE2的交易页面
+                const isPOE1 = window.location.href.includes('poe.game.qq.com/trade') &&
+                    !window.location.href.includes('/trade2');
+                const isPOE2 = window.location.href.includes('poe.game.qq.com/trade2');
+
+                if (isPOE1 || isPOE2) {
                     saveSearchRecord();
                 }
             }, 1000);
@@ -1423,13 +1474,17 @@
 
     // 初始化
     function init() {
-        // 检查是否为国服POE2交易页面
-        if (!window.location.href.includes('poe.game.qq.com/trade2/search/poe2')) {
-            console.log('不是国服POE2交易页面，跳过插件初始化');
+        // 检查是否为国服POE交易页面（POE1 或 POE2）
+        const isPOE1 = window.location.href.includes('poe.game.qq.com/trade') &&
+            !window.location.href.includes('/trade2');
+        const isPOE2 = window.location.href.includes('poe.game.qq.com/trade2');
+
+        if (!isPOE1 && !isPOE2) {
+            console.log('不是国服POE交易页面，跳过插件初始化');
             return;
         }
 
-        console.log('检测到国服POE2交易页面，初始化插件');
+        console.log(`检测到国服${versionName}交易页面，初始化插件`);
 
         // 等待页面加载完成后创建面板
         setTimeout(async () => {
@@ -1438,9 +1493,10 @@
             // 恢复上次使用的标签页
             let lastTab = 'history';
             try {
-                const store = await chrome.storage.local.get('poe2-last-tab');
-                if (store && store['poe2-last-tab']) {
-                    lastTab = store['poe2-last-tab'];
+                const storageKey = `${versionPrefix}-last-tab`;
+                const store = await chrome.storage.local.get(storageKey);
+                if (store && store[storageKey]) {
+                    lastTab = store[storageKey];
                 }
             } catch (e) { }
 
@@ -1491,7 +1547,8 @@
 
         // 记住当前激活的标签
         try {
-            chrome.storage.local.set({ 'poe2-last-tab': tabName });
+            const storageKey = `${versionPrefix}-last-tab`;
+            chrome.storage.local.set({ [storageKey]: tabName });
         } catch (e) { }
 
         // 加载对应数据
@@ -1525,7 +1582,8 @@
         // 保存到存储
         chrome.runtime.sendMessage({
             type: 'SAVE_FAVORITE',
-            data: folder
+            data: folder,
+            version: poeVersion
         }, (response) => {
             if (response && response.success) {
                 console.log('文件夹创建成功:', folder);
@@ -1566,7 +1624,8 @@
         // 保存到存储
         chrome.runtime.sendMessage({
             type: 'SAVE_FAVORITE',
-            data: favorite
+            data: favorite,
+            version: poeVersion
         }, (response) => {
             if (response && response.success) {
                 console.log('收藏添加成功:', favorite);
@@ -1586,7 +1645,7 @@
 
         favoritesContent.innerHTML = '<div class="poe2-loading">正在加载收藏...</div>';
 
-        chrome.runtime.sendMessage({ type: 'GET_FAVORITES' }, (response) => {
+        chrome.runtime.sendMessage({ type: 'GET_FAVORITES', version: poeVersion }, (response) => {
             if (response && response.success) {
                 displayFavorites(response.favorites || []);
             } else {
@@ -1783,7 +1842,7 @@
         );
         if (!confirmed) return;
 
-        chrome.runtime.sendMessage({ type: 'CLEAR_FAVORITES' }, (response) => {
+        chrome.runtime.sendMessage({ type: 'CLEAR_FAVORITES', version: poeVersion }, (response) => {
             if (response && response.success) {
                 console.log('收藏已清空');
                 loadFavorites();
@@ -1806,7 +1865,8 @@
 
         chrome.runtime.sendMessage({
             type: 'DELETE_FAVORITE',
-            id: favoriteId
+            id: favoriteId,
+            version: poeVersion
         }, (response) => {
             if (response && response.success) {
                 console.log('收藏删除成功:', favoriteId);
@@ -1822,7 +1882,7 @@
     // 显示移动到文件夹对话框
     function showMoveToFolderDialog(favoriteId) {
         // 获取当前收藏列表
-        chrome.runtime.sendMessage({ type: 'GET_FAVORITES' }, (response) => {
+        chrome.runtime.sendMessage({ type: 'GET_FAVORITES', version: poeVersion }, (response) => {
             if (response && response.success) {
                 const favorites = response.favorites || [];
                 const folders = favorites.filter(item => item.type === 'folder');
@@ -2047,7 +2107,8 @@
         chrome.runtime.sendMessage({
             type: 'MOVE_TO_FOLDER',
             favoriteId: favoriteId,
-            folderId: folderId
+            folderId: folderId,
+            version: poeVersion
         }, (response) => {
             if (response && response.success) {
                 console.log('收藏移动成功');
@@ -2071,7 +2132,8 @@
 
         chrome.runtime.sendMessage({
             type: 'DELETE_FOLDER',
-            id: folderId
+            id: folderId,
+            version: poeVersion
         }, (response) => {
             if (response && response.success) {
                 console.log('文件夹删除成功:', folderId);
@@ -2134,7 +2196,8 @@
                     chrome.runtime.sendMessage({
                         type: 'ADD_TO_FOLDER',
                         favorite: favorite,
-                        folderId: folderId
+                        folderId: folderId,
+                        version: poeVersion
                     }, resolve);
                 });
 
@@ -2184,7 +2247,8 @@
                     chrome.runtime.sendMessage({
                         type: 'RENAME_FOLDER',
                         id: folderId,
-                        newName: newName.trim()
+                        newName: newName.trim(),
+                        version: poeVersion
                     }, resolve);
                 });
 
@@ -2209,7 +2273,8 @@
     function moveToRoot(favoriteId) {
         chrome.runtime.sendMessage({
             type: 'MOVE_TO_ROOT',
-            favoriteId: favoriteId
+            favoriteId: favoriteId,
+            version: poeVersion
         }, (response) => {
             if (response && response.success) {
                 console.log('收藏移动到根目录成功:', favoriteId);
@@ -2285,7 +2350,8 @@
                     chrome.runtime.sendMessage({
                         type: 'MOVE_TO_FOLDER',
                         favoriteId: favoriteId,
-                        folderId: folderId
+                        folderId: folderId,
+                        version: poeVersion
                     }, (response) => {
                         if (response && response.success) {
                             console.log('拖拽移动成功');
@@ -2714,7 +2780,8 @@
         try {
             const response = await chrome.runtime.sendMessage({
                 type: 'IMPORT_FOLDER',
-                importData: importData
+                importData: importData,
+                version: poeVersion
             });
 
             if (response.success) {
@@ -2744,11 +2811,27 @@
     // 监听来自background的消息
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (request.type === 'TOGGLE_HISTORY_PANEL') {
+            // 检查是否为国服POE交易页面
+            const isPOE1 = window.location.href.includes('poe.game.qq.com/trade') &&
+                !window.location.href.includes('/trade2');
+            const isPOE2 = window.location.href.includes('poe.game.qq.com/trade2');
+
+            if (!isPOE1 && !isPOE2) {
+                sendResponse({ success: false, error: '不是国服POE交易页面' });
+                return;
+            }
+
             if (historyPanel) {
                 togglePanel();
             } else {
-                createHistoryPanel();
-                loadSearchHistory();
+                // 如果面板不存在，先初始化
+                init();
+                // 等待面板创建后再切换
+                setTimeout(() => {
+                    if (historyPanel) {
+                        togglePanel();
+                    }
+                }, 500);
             }
             sendResponse({ success: true });
         }
